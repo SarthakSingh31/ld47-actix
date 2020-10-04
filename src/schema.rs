@@ -29,6 +29,9 @@ table! {
         private_key -> Text,
         username -> Text,
         character_type -> Int4,
+        pos_x -> Int4,
+        pos_y -> Int4,
+        pos_orientation -> Int4,
         is_ai -> Bool,
         game_id -> Int4,
     }

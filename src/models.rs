@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use crate::schema::{game, turn, player, mutation, card_options_table};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Insertable, Identifiable)]
+#[serde(tag = "type")]
 #[table_name = "game"]
 pub struct Game {
     pub id: i32,
@@ -9,6 +10,7 @@ pub struct Game {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Insertable, Identifiable, Associations)]
+#[serde(tag = "type")]
 #[belongs_to(Game)]
 #[table_name = "turn"]
 pub struct Turn {
@@ -17,6 +19,7 @@ pub struct Turn {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Insertable, Identifiable, Associations)]
+#[serde(tag = "type")]
 #[belongs_to(Game)]
 #[table_name = "player"]
 pub struct Player {
@@ -24,6 +27,9 @@ pub struct Player {
     pub private_key: String,
     pub username: String,
     pub character_type: i32,
+    pub pos_x: i32,
+    pub pos_y: i32,
+    pub pos_orientation: i32,
     pub is_ai: bool,
     pub game_id: i32,
 }
@@ -35,6 +41,7 @@ pub struct NewPlayer {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Insertable, Identifiable, Associations)]
+#[serde(tag = "type")]
 #[belongs_to(Turn)]
 #[table_name = "mutation"]
 pub struct Mutation {
@@ -45,6 +52,7 @@ pub struct Mutation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Queryable, Insertable, Identifiable, Associations)]
+#[serde(tag = "type")]
 #[belongs_to(Player)]
 #[belongs_to(Turn)]
 #[table_name = "card_options_table"]

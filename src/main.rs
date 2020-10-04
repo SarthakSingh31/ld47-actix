@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 mod models;
 mod schema;
+mod actions;
 mod server;
 
 type DbPool = r2d2::Pool<ConnectionManager<PgConnection>>;
@@ -36,26 +37,26 @@ struct GameWebSocket {
 impl Actor for GameWebSocket {
     type Context = ws::WebsocketContext<Self>;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
-        // self.hb(ctx);
+    // fn started(&mut self, ctx: &mut Self::Context) {
+    //     // self.hb(ctx);
 
-        let addr = ctx.address();
-        self.data.1
-            .send(server::Connect {
-                addr: addr.recipient(),
-                pool: self.data.0.clone(),
-            })
-            .into_actor(self)
-            .then(|res, act, ctx| {
-                match res {
-                    Ok(res) => act.id = res,
-                    // something is wrong with chat server
-                    _ => ctx.stop(),
-                }
-                fut::ready(())
-            })
-            .wait(ctx);
-    }
+    //     let addr = ctx.address();
+    //     self.data.1
+    //         .send(server::Connect {
+    //             addr: addr.recipient(),
+    //             pool: self.data.0.clone(),
+    //         })
+    //         .into_actor(self)
+    //         .then(|res, act, ctx| {
+    //             match res {
+    //                 Ok(res) => act.id = res,
+    //                 // something is wrong with chat server
+    //                 _ => ctx.stop(),
+    //             }
+    //             fut::ready(())
+    //         })
+    //         .wait(ctx);
+    // }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
         // notify chat server
@@ -77,14 +78,15 @@ impl Handler<server::JsonStringMessage> for GameWebSocket {
 pub enum MessageType {
     InitiateGame {
         username: String,
-        charater_type: i32,
+        character_type: i32,
         color: Option<i32>,
     },
     ChooseCard {
         card_number: i32,
         location: i32,
-        user_id: i32,
+        player_id: i32,
         pk: String,
+        turn_id: i32,
     },
 }
 
@@ -98,11 +100,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
+                let conn = self.data.0.get().expect("couldn't get db connection from pool");
                 match serde_json::from_str(text.as_str()).unwrap() {
-                    MessageType::InitiateGame{username, charater_type, color} => {
+                    MessageType::InitiateGame{username, character_type, color} => {
                         let username_sent = username;
+                        let character_type_val = character_type;
                         use crate::schema::game::dsl::*;
-                        let conn = self.data.0.get().expect("couldn't get db connection from pool");
                         
                         let current_games = game
                             .filter(game_started.eq(false))
@@ -116,10 +119,48 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                 } else {
                                     let new_game = diesel::insert_into(game)
                                         .default_values()
-                                        .get_result(&conn);
+                                        .get_result::<models::Game>(&conn);
                                     match new_game {
                                         Ok(new_game) => {
+                                            let id_val = new_game.id;
                                             current_game = Some(new_game);
+                                            let start = Instant::now();
+                                            let handle = ctx.run_interval(Duration::from_secs(1), move |act, ctx| {
+                                                let secs = Instant::now().duration_since(start);
+                                                if secs <= Duration::from_secs(60) {
+                                                    act.data.1.send(server::CountDownMessage {
+                                                        game_id: id_val,
+                                                        secs: 60 - (secs.as_secs() as i32),
+                                                    })
+                                                    .into_actor(act)
+                                                    .then(|res, act, ctx| {
+                                                        match res {
+                                                            Ok(res) => act.id = res as usize,
+                                                            // something is wrong with chat server
+                                                            _ => ctx.stop(),
+                                                        }
+                                                        fut::ready(())
+                                                    })
+                                                    .wait(ctx);
+                                                }
+                                            });
+
+                                            ctx.run_later(Duration::from_secs(61), move |act, cxt_inner| {
+                                                cxt_inner.cancel_future(handle);
+                                                act.data.1.send(server::CreateTurnMessage {
+                                                    game_id: id_val,
+                                                })
+                                                .into_actor(act)
+                                                .then(|res, act, ctx| {
+                                                    match res {
+                                                        Ok(res) => act.id = res as usize,
+                                                        // something is wrong with chat server
+                                                        _ => ctx.stop(),
+                                                    }
+                                                    fut::ready(())
+                                                })
+                                                .wait(cxt_inner);
+                                            });
                                         },
                                         Err(e) => ctx.text(format!("{}", e)),
                                     }
@@ -127,23 +168,60 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
 
                                 if let Some(current_game) = current_game {
                                     use crate::schema::player::dsl::*;
+                                    let mut rng = thread_rng();
+
+                                    // TODO: replace this with actual board size
+                                    let mut pos_x_rand: i32 = rng.gen_range(0, 100);
+                                    let mut pos_y_rand: i32 = rng.gen_range(0, 100);
+
+                                    while {
+                                       match player
+                                           .filter(pos_x.eq(pos_x_rand))
+                                           .filter(pos_y.eq(pos_y_rand))
+                                           .load::<models::Player>(&conn) {
+                                           Ok(players) => !players.is_empty(),
+                                           Err(_) => false,
+                                       }
+                                    } {
+                                        pos_x_rand = rng.gen_range(0, 100);
+                                        pos_y_rand = rng.gen_range(0, 100);
+                                    }                                 
 
                                     let new_player: Result<models::Player, _> = diesel::insert_into(player)
                                         .values((
-                                            private_key.eq(thread_rng()
+                                            private_key.eq(rng
                                                 .sample_iter(&Alphanumeric)
                                                 .take(10)
                                                 .collect::<String>()),
                                             username.eq(&username_sent),
-                                            character_type.eq(&charater_type),
+                                            character_type.eq(&character_type_val),
+                                            pos_x.eq(pos_x_rand),
+                                            pos_y.eq(pos_y_rand),
+                                            pos_orientation.eq(rng.gen_range(0, 4)),
                                             is_ai.eq(false),
                                             game_id.eq(current_game.id)
                                         ))
                                         .get_result(&conn);
                                     match new_player {
-                                        Ok(new_player) => match serde_json::to_string(&new_player) {
-                                            Ok(s) => ctx.text(s),
-                                            Err(e) => ctx.text(format!("{}", e)),
+                                        Ok(new_player) => {
+                                            match serde_json::to_string(&new_player) {
+                                                Ok(s) => ctx.text(s),
+                                                Err(e) => ctx.text(format!("{}", e)),
+                                            }
+                                            self.data.1.send(server::Connect {
+                                                addr: ctx.address().recipient(),
+                                                player: new_player,
+                                            })
+                                            .into_actor(self)
+                                            .then(|res, act, ctx| {
+                                                match res {
+                                                    Ok(res) => act.id = res as usize,
+                                                    // something is wrong with chat server
+                                                    _ => ctx.stop(),
+                                                }
+                                                fut::ready(())
+                                            })
+                                            .wait(ctx);
                                         },
                                         Err(e) => ctx.text(format!("{}", e)),
                                     }
@@ -154,8 +232,66 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                             Err(e) => ctx.text(format!("{}", e)),
                         }
                     },
-                    MessageType::ChooseCard {card_number, location, user_id, pk} => {
+                    MessageType::ChooseCard {card_number, location, player_id, pk, turn_id} => {
+                        use schema::player::dsl::player;
+                        // TODO: add check for generated cards
+                        match player.find(player_id).first::<models::Player>(&conn) {
+                            Ok(current_player) => {
+                                if current_player.private_key == pk {
+                                    let turn = actions::get_current_turn_of_game_id(current_player.game_id, &conn);
 
+                                    let turn_id_val = turn_id;
+                                    if let Some(turn) = turn {
+                                        if turn.id != turn_id_val {
+                                            ctx.text("bad turn id mate");
+                                            return;
+                                        }
+
+                                        use schema::mutation::dsl::{
+                                            mutation,
+                                            card_type,
+                                            card_location,
+                                            turn_id
+                                        };
+
+                                        let new_mut: Result<models::Mutation, _> = diesel::insert_into(mutation)
+                                            .values((
+                                                card_type.eq(card_number),
+                                                card_location.eq(location),
+                                                turn_id.eq(turn.id)
+                                            ))
+                                            .get_result(&conn);
+                                        
+                                        match new_mut {
+                                            Ok(new_mut) => {
+                                                self.data.1
+                                                    .send(server::MutationMessage {
+                                                        mutation: new_mut,
+                                                        player_id: current_player.id,
+                                                        game_id: current_player.game_id,
+                                                    })
+                                                    .into_actor(self)
+                                                    .then(|res, act, ctx| {
+                                                        match res {
+                                                            Ok(res) => act.id = res as usize,
+                                                            // something is wrong with chat server
+                                                            _ => ctx.stop(),
+                                                        }
+                                                        fut::ready(())
+                                                    })
+                                                    .wait(ctx);
+                                            },
+                                            Err(e) => ctx.text(format!("{}", e)),
+                                        }
+                                    } else {
+                                        ctx.text("No turn kinda weird");
+                                    }
+                                } else {
+                                    ctx.text("Wrong pk");
+                                }
+                            },
+                            Err(e) => ctx.text(format!("{}", e)),
+                        } 
                     }
                     _ => ()
                 }

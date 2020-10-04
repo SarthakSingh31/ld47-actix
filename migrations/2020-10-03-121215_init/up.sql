@@ -13,6 +13,9 @@ CREATE TABLE player (
     private_key TEXT NOT NULL,
     username TEXT NOT NULL,
     character_type INTEGER NOT NULL,
+    pos_x INTEGER NOT NULL,
+    pos_y INTEGER NOT NULL,
+    pos_orientation INTEGER NOT NULL,
     is_ai BOOLEAN NOT NULL,
     game_id INTEGER REFERENCES game (id) NOT NULL
 );
