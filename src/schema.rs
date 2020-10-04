@@ -10,6 +10,8 @@ table! {
 table! {
     game (id) {
         id -> Int4,
+        size_x -> Int4,
+        size_y -> Int4,
         game_started -> Bool,
     }
 }

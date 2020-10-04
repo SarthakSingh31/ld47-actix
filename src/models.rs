@@ -6,6 +6,8 @@ use crate::schema::{game, turn, player, mutation, card_options_table};
 #[table_name = "game"]
 pub struct Game {
     pub id: i32,
+    pub size_x: i32,
+    pub size_y: i32,
     pub game_started: bool,
 }
 

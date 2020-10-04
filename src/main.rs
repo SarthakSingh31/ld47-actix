@@ -25,9 +25,6 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-const NUMBER_OF_CARDS: i32 = 50i32;
-
-
 struct GameWebSocket {
     id: usize,
     hb: Instant,
@@ -88,6 +85,11 @@ pub enum MessageType {
         pk: String,
         turn_id: i32,
     },
+    AnimationsDone {
+        player_id: i32,
+        pk: String,
+        turn_id: i32,
+    }
 }
 
 /// Handler for ws::Message message
@@ -124,43 +126,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                         Ok(new_game) => {
                                             let id_val = new_game.id;
                                             current_game = Some(new_game);
-                                            let start = Instant::now();
-                                            let handle = ctx.run_interval(Duration::from_secs(1), move |act, ctx| {
-                                                let secs = Instant::now().duration_since(start);
-                                                if secs <= Duration::from_secs(60) {
-                                                    act.data.1.send(server::CountDownMessage {
-                                                        game_id: id_val,
-                                                        secs: 60 - (secs.as_secs() as i32),
-                                                    })
-                                                    .into_actor(act)
-                                                    .then(|res, act, ctx| {
-                                                        match res {
-                                                            Ok(res) => act.id = res as usize,
-                                                            // something is wrong with chat server
-                                                            _ => ctx.stop(),
-                                                        }
-                                                        fut::ready(())
-                                                    })
-                                                    .wait(ctx);
+                                            self.data.1.send(server::CountDownMessage {
+                                                game_id: id_val,
+                                            })
+                                            .into_actor(self)
+                                            .then(|res, act, ctx| {
+                                                match res {
+                                                    Ok(res) => act.id = res as usize,
+                                                    // something is wrong with chat server
+                                                    _ => ctx.stop(),
                                                 }
-                                            });
-
-                                            ctx.run_later(Duration::from_secs(61), move |act, cxt_inner| {
-                                                cxt_inner.cancel_future(handle);
-                                                act.data.1.send(server::CreateTurnMessage {
-                                                    game_id: id_val,
-                                                })
-                                                .into_actor(act)
-                                                .then(|res, act, ctx| {
-                                                    match res {
-                                                        Ok(res) => act.id = res as usize,
-                                                        // something is wrong with chat server
-                                                        _ => ctx.stop(),
-                                                    }
-                                                    fut::ready(())
-                                                })
-                                                .wait(cxt_inner);
-                                            });
+                                                fut::ready(())
+                                            })
+                                            .wait(ctx);
                                         },
                                         Err(e) => ctx.text(format!("{}", e)),
                                     }
@@ -209,7 +187,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                                 Err(e) => ctx.text(format!("{}", e)),
                                             }
                                             self.data.1.send(server::Connect {
-                                                addr: ctx.address().recipient(),
+                                                addr: Some(ctx.address().recipient()),
                                                 player: new_player,
                                             })
                                             .into_actor(self)
