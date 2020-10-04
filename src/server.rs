@@ -203,7 +203,7 @@ impl GameServer {
             let mut postistion_set = HashSet::new();
 
             for i in 0..(MAX_PLAYERS - current_players.len() as i32) {
-                let mut pos: (i32, i32) = (self.rng.gen_range(0, 100), self.rng.gen_range(0, 100));
+                let mut pos: (i32, i32) = (self.rng.gen_range(0, 16), self.rng.gen_range(0, 9));
 
                 while {
                     !postistion_set.contains(&pos) && match player
@@ -214,8 +214,8 @@ impl GameServer {
                         Err(_) => false,
                     }
                 } {
-                    pos.0 = self.rng.gen_range(0, 100);
-                    pos.1 = self.rng.gen_range(0, 100);
+                    pos.0 = self.rng.gen_range(0, 16);
+                    pos.1 = self.rng.gen_range(0, 9);
                 }
 
                 postistion_set.insert(pos);

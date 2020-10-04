@@ -149,8 +149,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                     let mut rng = thread_rng();
 
                                     // TODO: replace this with actual board size
-                                    let mut pos_x_rand: i32 = rng.gen_range(0, 100);
-                                    let mut pos_y_rand: i32 = rng.gen_range(0, 100);
+                                    let mut pos_x_rand: i32 = rng.gen_range(0, 16);
+                                    let mut pos_y_rand: i32 = rng.gen_range(0, 9);
 
                                     while {
                                        match player
@@ -161,8 +161,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                                            Err(_) => false,
                                        }
                                     } {
-                                        pos_x_rand = rng.gen_range(0, 100);
-                                        pos_y_rand = rng.gen_range(0, 100);
+                                        pos_x_rand = rng.gen_range(0, 16);
+                                        pos_y_rand = rng.gen_range(0, 9);
                                     }                                 
 
                                     let new_player: Result<models::Player, _> = diesel::insert_into(player)
