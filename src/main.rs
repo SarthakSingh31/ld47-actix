@@ -8,6 +8,7 @@ use serde::{Deserialize};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 mod models;
+mod config;
 mod server;
 
 struct GameWebSocket {

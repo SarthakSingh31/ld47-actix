@@ -5,8 +5,8 @@ use serde::Serialize;
 use rand::prelude::*;
 use rand::Rng;
 use crate::models::{Game, Player, Mutation, CardOptions};
+use crate::config::{Card, PlayerAction, GameConfig};
 
-const NUMBER_OF_CARDS: u8 = 5;
 const MAX_PLAYERS: usize = 10;
 const BOARD_SIZE: (u16, u16) = (16, 9);
 
@@ -134,6 +134,7 @@ impl PlayerJoin {
 pub struct GameServer {
     games: HashMap<usize, Game>,
     rng: ThreadRng,
+    gc: GameConfig,
 }
 
 impl GameServer {
@@ -141,6 +142,7 @@ impl GameServer {
         GameServer {
             games: HashMap::new(),
             rng: rand::thread_rng(),
+            gc: GameConfig::default(),
         }
     }
 
@@ -170,11 +172,11 @@ impl GameServer {
         }
     }
 
-    fn fill_slots_with_ai(game: &mut Game, rng: &mut ThreadRng, ctx: &mut Context<Self>, game_id: usize) {
+    fn fill_slots_with_ai(game: &mut Game, rng: &mut ThreadRng, ctx: &mut Context<Self>, game_id: usize, gc: &GameConfig) {
         for n in 0 .. (MAX_PLAYERS - game.players.len()) {
             ctx.address().do_send(Connect {
                 username: format!("Bot {}", n),
-                character_type: rng.gen_range(0, NUMBER_OF_CARDS),
+                character_type: rng.gen_range(0, gc.cards.len() as u8),
                 addr: None,
                 game_id: Some(game_id),
             });
@@ -294,7 +296,7 @@ impl Handler<Connect> for GameServer {
             if current_player.is_ai {
                 ctx.address().do_send(MutationMessage {
                     mutation: Mutation {
-                        card_type: self.rng.gen_range(0, NUMBER_OF_CARDS),
+                        card_type: self.rng.gen_range(0, self.gc.cards.len() as u8),
                         card_location: 0,
                     },
                     player_id: current_player.id,
@@ -307,7 +309,7 @@ impl Handler<Connect> for GameServer {
             player_id
         } else {
             if let Some(addr) = connect.addr {
-                let _ = addr.do_send(ToUserMessage(String::from("Game already full")));
+                let _ = addr.do_send(ToUserMessage(format!("Game already full: {}", key)));
             }
             0
         }
@@ -396,14 +398,14 @@ impl Handler<CreateTurnMessage> for GameServer {
             ctx.cancel_future(countdown_handle);
             current_game.game_countdown_handle = None;
             current_game.game_started = true;
-            GameServer::fill_slots_with_ai(current_game, &mut rng, ctx, gameinfo.game_id);
+            GameServer::fill_slots_with_ai(current_game, &mut rng, ctx, gameinfo.game_id, &self.gc);
         } else {
             let players_with_no_move = current_game.players.iter().filter(|p| p.previous_choices.len() < current_game.turn_index);
 
             for player in players_with_no_move {
                 ctx.address().do_send(MutationMessage {
                     mutation: Mutation {
-                        card_type: self.rng.gen_range(0, NUMBER_OF_CARDS),
+                        card_type: self.rng.gen_range(0, self.gc.cards.len() as u8),
                         card_location: 0,
                     },
                     player_id: player.id,
@@ -430,7 +432,7 @@ impl Handler<CreateTurnMessage> for GameServer {
         for ai_player in current_game.players.iter().filter(|p| p.is_ai) {
             ctx.address().do_send(MutationMessage {
                 mutation: Mutation {
-                    card_type: self.rng.gen_range(0, NUMBER_OF_CARDS),
+                    card_type: self.rng.gen_range(0, self.gc.cards.len() as u8),
                     card_location: 0,
                 },
                 player_id: ai_player.id,
@@ -451,9 +453,9 @@ impl Handler<CardChoiceMessage> for GameServer {
         let current_game = self.games.get_mut(&gameinfo.game_id).unwrap();
         for (i, player) in  current_game.players.iter_mut().enumerate() {
             player.card_options = Some(vec![
-                self.rng.gen_range(0, NUMBER_OF_CARDS),
-                self.rng.gen_range(0, NUMBER_OF_CARDS),
-                self.rng.gen_range(0, NUMBER_OF_CARDS),
+                self.rng.gen_range(0, self.gc.cards.len() as u8),
+                self.rng.gen_range(0, self.gc.cards.len() as u8),
+                self.rng.gen_range(0, self.gc.cards.len() as u8),
             ]); 
 
             let card_options = CardOptions {
