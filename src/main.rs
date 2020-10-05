@@ -1,8 +1,11 @@
+use std::env;
+
 use actix::prelude::*;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 
 use serde::{Deserialize};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 
 mod models;
 mod server;
@@ -58,6 +61,12 @@ pub enum MessageType {
         pk: String,
         turn_id: usize,
         game_id: usize,
+    },
+    Prune {
+        password: String,
+    },
+    FullClean {
+        password: String,
     }
 }
 
@@ -77,12 +86,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                             username: username,
                             character_type: character_type,
                             addr: Some(ctx.address().recipient()),
+                            game_id: None, // Only for bot use
                         })
                         .into_actor(self)
                         .then(|res, act, ctx| {
                             match res {
                                 Ok(res) => act.id = res as usize,
-                                // something is wrong with chat server
+                                // something is wrong with server
                                 _ => ctx.stop(),
                             }
                             fut::ready(())
@@ -105,7 +115,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                         .then(|res, act, ctx| {
                             match res {
                                 Ok(res) => act.id = res as usize,
-                                // something is wrong with chat server
+                                // something is wrong with server
                                 _ => ctx.stop(),
                             }
                             fut::ready(())
@@ -123,7 +133,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                         .then(|res, act, ctx| {
                             match res {
                                 Ok(res) => act.id = res as usize,
-                                // something is wrong with chat server
+                                // something is wrong with server
                                 _ => ctx.stop(),
                             }
                             fut::ready(())
@@ -142,12 +152,54 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                         .then(|res, act, ctx| {
                             match res {
                                 Ok(res) => act.id = res as usize,
-                                // something is wrong with chat server
+                                // something is wrong with server
                                 _ => ctx.stop(),
                             }
                             fut::ready(())
                         })
                         .wait(ctx);
+                    },
+                    MessageType::Prune { password } => {
+                        if Ok(password) == env::var("LD47_PASSWORD") {
+                            self.data.send(server::MessagePrune {
+                                addr: ctx.address().recipient(),
+                            })
+                            .into_actor(self)
+                            .then(|res, act, ctx| {
+                                match res {
+                                    Ok(res) => act.id = res as usize,
+                                    // something is wrong with server
+                                    _ => ctx.stop(),
+                                }
+                                fut::ready(())
+                            })
+                            .wait(ctx);
+                        } else {
+                            let _ = ctx.address().recipient().do_send(
+                                server::ToUserMessage(String::from("Wrong password"))
+                            );
+                        }
+                    },
+                    MessageType::FullClean { password } => {
+                        if Ok(password) == env::var("LD47_PASSWORD") {
+                            self.data.send(server::MessageFullClean {
+                                addr: ctx.address().recipient(),
+                            })
+                            .into_actor(self)
+                            .then(|res, act, ctx| {
+                                match res {
+                                    Ok(res) => act.id = res as usize,
+                                    // something is wrong with server
+                                    _ => ctx.stop(),
+                                }
+                                fut::ready(())
+                            })
+                            .wait(ctx);
+                        } else {
+                            let _ = ctx.address().recipient().do_send(
+                                server::ToUserMessage(String::from("Wrong password"))
+                            );
+                        }
                     },
                     _ => ()
                 }
@@ -173,12 +225,29 @@ async fn index(
 async fn main() -> std::io::Result<()> {
     let server = server::GameServer::new().start();
 
-    HttpServer::new(move || {
-        App::new()
-        .data(server.clone())
-        .route("/game/", web::get().to(index))
-    })
-        .bind("0.0.0.0:8080")?
-        .run()
-        .await
+    if Ok(String::from("SSL")) == env::var("MODE") {
+        let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        builder
+            .set_private_key_file("key.pem", SslFiletype::PEM)
+            .unwrap();
+        builder.set_certificate_chain_file("cert.pem").unwrap();
+
+        HttpServer::new(move || {
+            App::new()
+            .data(server.clone())
+            .route("/", web::get().to(index))
+        })
+            .bind_openssl("0.0.0.0:443", builder)?
+            .run()
+            .await
+    } else {
+        HttpServer::new(move || {
+            App::new()
+            .data(server.clone())
+            .route("/", web::get().to(index))
+        })
+            .bind("0.0.0.0:8080")?
+            .run()
+            .await
+    }
 }

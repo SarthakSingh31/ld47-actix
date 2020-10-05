@@ -20,6 +20,7 @@ pub struct Connect {
     pub username: String,
     pub character_type: u8,
     pub addr: Option<Recipient<ToUserMessage>>,
+    pub game_id: Option<usize>, // Only for bot use
 }
 
 #[derive(Message)]
@@ -50,6 +51,18 @@ pub struct CreateTurnMessage {
 pub struct CardChoiceMessage {
     pub game_id: usize,
     pub turn_id: usize,
+}
+
+#[derive(Message)]
+#[rtype(usize)]
+pub struct MessagePrune {
+    pub addr: Recipient<ToUserMessage>,
+}
+
+#[derive(Message)]
+#[rtype(usize)]
+pub struct MessageFullClean {
+    pub addr: Recipient<ToUserMessage>,
 }
 
 /// Session is disconnected
@@ -83,7 +96,7 @@ pub struct BroadcastObj<O: Serialize> {
 pub struct BroadcastStr {
     pub json_string: String,
     pub ori_player_id: Option<usize>,
-    pub player_addrs_and_ids: Vec<(usize, Recipient<ToUserMessage>)>
+    pub game_id: usize,
 }
 
 #[derive(Message)]
@@ -157,17 +170,18 @@ impl GameServer {
         }
     }
 
-    fn fill_slots_with_ai(game: &mut Game, rng: &mut ThreadRng, ctx: &mut Context<Self>) {
+    fn fill_slots_with_ai(game: &mut Game, rng: &mut ThreadRng, ctx: &mut Context<Self>, game_id: usize) {
         for n in 0 .. (MAX_PLAYERS - game.players.len()) {
             ctx.address().do_send(Connect {
                 username: format!("Bot {}", n),
                 character_type: rng.gen_range(0, NUMBER_OF_CARDS),
                 addr: None,
+                game_id: Some(game_id),
             });
         }
     }
 
-    fn get_real_active_players(game: &mut Game) -> Vec<&Player> {
+    fn get_real_active_players(game: &Game) -> Vec<&Player> {
         game.players.iter().filter(|p| !p.is_ai && p.active).collect()
     }
 }
@@ -185,12 +199,20 @@ impl Handler<Connect> for GameServer {
     fn handle(&mut self, connect: Connect, ctx: &mut Context<Self>) -> Self::Result {
         let current_game: &mut Game;
         let mut key: usize;
-        let mut open_games: Vec<(_, &mut Game)> = self.games.iter_mut().filter(|(_, game)| game.game_started).collect();
+        let mut open_games: Vec<(_, &mut Game)>;
+
+        if let Some(ref game_id) = connect.game_id {
+            open_games = Vec::new();
+            open_games.push((game_id, self.games.get_mut(&game_id).unwrap()));
+        } else {
+            open_games = self.games.iter_mut().filter(|(_, game)| !game.game_started).collect();
+        }
 
         if open_games.len() > 0 {
             key = *open_games[0].0;
             current_game = open_games[0].1;
         } else {
+            println!("didn't find open game");
             key = self.rng.gen();
             while self.games.contains_key(&key) { key = self.rng.gen(); }
 
@@ -321,14 +343,13 @@ impl Handler<CountDownMessage> for GameServer {
         let start = Instant::now();
         let game_id = countdown.game_id;
         let game = self.games.get_mut(&countdown.game_id).unwrap();
-        let addr_data = game.get_cloned_players_id_addr();
         game.game_countdown_handle = Some(ctx.run_interval(Duration::from_secs(1), move |_act, ctx| {
             let secs = Instant::now().duration_since(start);
             if secs <= Duration::from_secs(10) {
                 ctx.address().do_send(BroadcastStr {
                     json_string: format!("{{\"type\": \"TillStart\", \"secs\": \"{}\"}}", 10 - secs.as_secs()),
                     ori_player_id: None,
-                    player_addrs_and_ids: addr_data.clone()
+                    game_id: game_id
                 });
             } else {
                 ctx.address().do_send(CreateTurnMessage {
@@ -354,7 +375,8 @@ impl Handler<BroadcastStr> for GameServer {
     type Result = ();
 
     fn handle(&mut self, obj: BroadcastStr, _: &mut Context<Self>) {
-        GameServer::broadcast_to_game_str(obj.json_string, obj.ori_player_id, obj.player_addrs_and_ids);
+        let p_data = self.games.get(&obj.game_id).unwrap().get_cloned_players_id_addr();
+        GameServer::broadcast_to_game_str(obj.json_string, obj.ori_player_id, p_data);
     }
 }
 
@@ -364,9 +386,9 @@ impl Handler<CreateTurnMessage> for GameServer {
     fn handle(&mut self, gameinfo: CreateTurnMessage, ctx: &mut Context<Self>) -> Self::Result {
         let mut current_game = self.games.get_mut(&gameinfo.game_id).unwrap();
         let mut rng = self.rng;
+        current_game.has_loop_countdown = false;
 
         if let Some(check_turn_id) = gameinfo.check_turn_id {
-            current_game.has_loop_countdown = false;
             if check_turn_id != current_game.turn_index { return 0; }
         }
 
@@ -374,8 +396,7 @@ impl Handler<CreateTurnMessage> for GameServer {
             ctx.cancel_future(countdown_handle);
             current_game.game_countdown_handle = None;
             current_game.game_started = true;
-
-            GameServer::fill_slots_with_ai(current_game, &mut rng, ctx);
+            GameServer::fill_slots_with_ai(current_game, &mut rng, ctx, gameinfo.game_id);
         } else {
             let players_with_no_move = current_game.players.iter().filter(|p| p.previous_choices.len() < current_game.turn_index);
 
@@ -505,7 +526,44 @@ impl Handler<PollPlayerDeathMessage> for GameServer {
 
         gameinfo.self_id
     }
-} 
+}
+
+impl Handler<MessagePrune> for GameServer {
+    type Result = usize;
+
+    fn handle(&mut self, msg: MessagePrune, _: &mut Context<Self>) -> Self::Result {
+        let mut to_remove = Vec::new();
+
+        for (i, game) in self.games.iter() {
+            let active_players = Self::get_real_active_players(game).len();
+            if active_players < 1 {
+                to_remove.push(*i);
+            }
+        }
+
+        for i in to_remove.iter() {
+            self.games.remove(i);
+        }
+
+        let _ = msg.addr.do_send(ToUserMessage(format!("Removed {} games", to_remove.len())));
+        to_remove.len()
+    }
+}
+
+impl Handler<MessageFullClean> for GameServer {
+    type Result = usize;
+
+    fn handle(&mut self, msg: MessageFullClean, _: &mut Context<Self>) -> Self::Result {
+        let keys: Vec<_> = self.games.keys().into_iter().map(|i| *i).collect();
+
+        for i in keys.iter() {
+            self.games.remove(i);
+        }
+
+        let _ = msg.addr.do_send(ToUserMessage(format!("Removed {} games", keys.len())));
+        keys.len()
+    }
+}
 
 impl Handler<Disconnect> for GameServer {
     type Result = i32;
