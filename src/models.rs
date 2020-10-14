@@ -8,6 +8,7 @@ use crate::server::ToUserMessage;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub struct Mutation {
+    pub user_id: usize,
     pub card_type: u8,
     pub card_location: u8,
 }
@@ -75,6 +76,7 @@ pub struct Game {
     pub available_pos: Vec<(u16, u16)>,
     pub game_countdown_handle: Option<SpawnHandle>,
     pub has_loop_countdown: bool,
+    pub game_tick_handle: SpawnHandle,
 }
 
 impl Game {

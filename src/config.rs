@@ -1,4 +1,4 @@
-pub struct PlayerAction {
+pub struct Animation {
     pub move_distance: u16,
     pub rotation: u8,
 }
@@ -10,34 +10,15 @@ pub struct Card {
 }
 
 pub struct GameConfig {
-    pub cards: Vec<Card>,
-    pub actions: Vec<PlayerAction>,
+    pub cards: usize,
+    pub actions: usize,
 }
 
 impl GameConfig {
     pub fn default() -> Self {
-        let actions = vec![
-            PlayerAction {
-                move_distance: 1,
-                rotation: 0,
-            }
-        ];
-
-        let cards = vec! [
-            Card {
-                disorient: false,
-                dmg: 0,
-                actions: vec![0]
-            },
-            Card {
-                disorient: true,
-                dmg: 5,
-                actions: vec![0, 0, 0]
-            }
-        ];
         GameConfig {
-            cards: cards,
-            actions: actions,
+            cards: 38,
+            actions: 0,
         }
     }
 }

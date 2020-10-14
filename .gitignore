@@ -1,1 +1,6 @@
-/target
+/target/debug
+/target/rls
+/target/release/*
+!/target/release/ld47-actix
+/target/x86**
+/target/.rust*

@@ -10,6 +10,7 @@ use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 mod models;
 mod config;
 mod server;
+mod simulator;
 
 struct GameWebSocket {
     id: usize,
@@ -45,10 +46,10 @@ pub enum MessageType {
     ChooseCard {
         card_number: u8,
         location: u8,
-        player_id: usize,
         pk: String,
         turn_id: usize,
         game_id: usize,
+        user_id: usize,
     },
     AnimationsDone {
         player_id: usize,
@@ -100,14 +101,15 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for GameWebSocket {
                         })
                         .wait(ctx);
                     },
-                    MessageType::ChooseCard {card_number, location, player_id, pk, turn_id, game_id} => {
+                    MessageType::ChooseCard {card_number, location, pk, turn_id, game_id, user_id} => {
                         let mutation = models::Mutation {
+                            user_id: user_id,
                             card_type: card_number,
                             card_location: location,
                         };
                         self.data.send(server::MutationMessage {
                             mutation: mutation,
-                            player_id: player_id,
+                            player_id: user_id,
                             game_id: game_id,
                             pk: pk,
                             turn_id: turn_id,
@@ -224,7 +226,7 @@ async fn index(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let server = server::GameServer::new().start();
+    let server = actix::Supervisor::start(|_| server::GameServer::new());
 
     if Ok(String::from("SSL")) == env::var("MODE") {
         let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
